@@ -1,0 +1,37 @@
+{
+  "enabled": true,
+  "adrenalineBuffIds": [
+    201903,
+    201905,
+    200700,
+    200701
+  ],
+  "brooch": {
+    "enabled": true,
+    "itemId": null,
+    "buffIds": [
+      999001052
+    ],
+    "cooldownBuffIds": [
+      301807
+    ]
+  },
+  "beer": {
+    "enabled": true,
+    "itemIds": [
+      80081,
+      206045,
+      207551,
+      209204,
+      602185
+    ],
+    "buffIds": [
+      70254,
+      6055
+    ]
+  },
+  "acknowledgementMs": 700,
+  "retryDelayMs": 350,
+  "maxAttempts": 4,
+  "itemSpacingMs": 100
+}

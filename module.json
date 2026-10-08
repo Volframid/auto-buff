@@ -1,0 +1,13 @@
+{
+  "name": "auto-buff",
+  "author": "CEM",
+  "description": "Use equipped brooch and Lein's Dark Root Beer during confirmed class buffs for all 13 classes.",
+  "version": "1.2.0",
+  "disableAutoUpdate": false,
+  "options": {
+    "niceName": "Auto Buff",
+    "cliName": "Auto Buff"
+  },
+  "servers": ["https://raw.githubusercontent.com/Volframid/auto-buff/main/"],
+  "supportUrl": "https://github.com/Volframid/auto-buff/issues"
+}
