@@ -1,6 +1,6 @@
 # Auto Buff
 
-Standalone brooch and Lein's Dark Root Beer automation for all 13 TERA classes. No other mod or external skill list is required.
+Automates the equipped brooch and Lein's Dark Root Beer during your class buff. Supports all 13 TERA classes.
 
 ## How it works
 
