@@ -1,6 +1,7 @@
 /logs/
 /cooldowns.json
 /module.config.json
+/LOCAL_UPDATES.md
 *.tmp
 *.bak
 Thumbs.db

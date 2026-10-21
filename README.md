@@ -4,7 +4,7 @@ Automates the equipped brooch and Lein's Dark Root Beer during your class buff. 
 
 ## How it works
 
-The module detects your class and waits for its actual server-confirmed buff. It uses the equipped brooch and available beer individually, 100 ms apart. An item still on cooldown is used when its real cooldown ends, provided the class buff is still active. It never casts or cancels a skill, or creates a fake buff.
+The module detects your class and waits for its actual server-confirmed buff. It uses the equipped brooch and available beer individually, 100 ms apart. An item still on cooldown is used when its real cooldown ends, provided the class buff is still active. Automatic brooch use additionally requires at least **15 seconds remaining** on the class-buff window at the moment of the request. This applies to every class, including retries and cooldowns that finish late. For example, a brooch becoming ready with four seconds of Adrenaline Rush left waits for an eligible buff window instead. Beer has no new minimum-duration restriction. It never casts or cancels a skill, or creates a fake buff.
 
 | Class | Trigger |
 |---|---|
@@ -27,6 +27,8 @@ The module detects your class and waits for its actual server-confirmed buff. It
 Priest and Mystic buffs can also be received from other players. Their initial activation must follow a matching player skill request/confirmed action within 15 seconds, or identify the player as its source. Priest ignores a known different caster. The 15 seconds validates the cast association; the active automation window always comes from the real buff duration.
 
 Growing Fury with native infinity metadata stays active until its buff removal; it does not create a polling loop. Items are confirmed once per continuous buff window. Concurrent buff components and refreshes do not repeatedly consume confirmed items.
+
+The 15-second brooch rule uses the latest server-confirmed duration, including refreshes and early removal. A newly extended eligible window can release a waiting brooch; a delayed callback rechecks the current remaining time. An infinite class buff passes the duration check, while a finite window shorter than 15 seconds cannot trigger an automatic brooch. Manual brooch use is unaffected.
 
 Berserker can use beer during each separate Fiery Rage window without waiting for Unleash. Beer and brooch follow their own server-reported cooldowns; the module does not assume a fixed 55-second or 3-minute recharge.
 
