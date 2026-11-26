@@ -2,7 +2,7 @@
   "name": "auto-buff",
   "author": "CEM",
   "description": "Use equipped brooch and Lein's Dark Root Beer during combat and confirmed class buffs, with a Pit of Petrax exception.",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "disableAutoUpdate": false,
   "options": {
     "niceName": "Auto Buff",

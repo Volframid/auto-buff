@@ -5,6 +5,10 @@ const path = require('path');
 const Automation = require('./lib/automation');
 
 const PETRAX_ZONE = 9126;
+const BAHAAR_ZONE = 9044;
+const BAHAAR_HUNTING_ZONE = 444;
+const BAHAAR_PHASE_ONE = 1000;
+const BAHAAR_PHASE_TWO = 2000;
 
 module.exports = function AutoBuff(mod) {
   mod.game.initialize(['me', 'inventory', 'contract']);
@@ -13,8 +17,11 @@ module.exports = function AutoBuff(mod) {
   const statePath = path.join(__dirname, 'cooldowns.json');
   let config = readConfig(), profiles = readProfiles(), profileClass = null, profile = null;
   let location = null, facing = 0, character = null, learning = null, logFile = null;
-  let inCombat = Boolean(mod.game.me.inCombat), defeatedBoss = null;
-  const encounterBosses = new Set();
+  let inCombat = Boolean(mod.game.me.inCombat), bossFightEnded = false;
+  const bosses = new Map();
+  const bahaarBossPhases = new Map();
+  let bahaarPhase = null;
+  let bahaarPhaseOneHp = null;
   const acceptedTriggers = new Set();
   let ownCastAt = -Infinity;
   const stored = readJson(statePath, {});
@@ -23,7 +30,7 @@ module.exports = function AutoBuff(mod) {
     config, now: Date.now,
     setTimeout: (fn, delay) => mod.setTimeout(fn, delay), clearTimeout: timer => mod.clearTimeout(timer),
     available: () => mod.game.isIngame && !mod.game.isInLoadingScreen && mod.game.me.alive &&
-      (mod.game.me.zone === PETRAX_ZONE || (inCombat && defeatedBoss === null)) &&
+      (mod.game.me.zone === PETRAX_ZONE || (inCombat && !bossFightEnded && !bahaarPaused())) &&
       !!profile && profileClass === mod.game.me.class && !mod.game.me.mounted && !mod.game.contract.active && location !== null,
     select: selectItems,
     send: sendItem,
@@ -145,6 +152,7 @@ module.exports = function AutoBuff(mod) {
     if (!trigger && !['brooch', 'beer'].some(kind =>
         config[kind].buffIds.includes(packet.id) || config[kind].cooldownBuffIds.includes(packet.id))) return;
     if (name === 'S_ABNORMALITY_END') {
+      if (engine.cooldownBuffs.get(packet.id) > Date.now()) holdBahaarReset(name);
       acceptedTriggers.delete(packet.id); engine.endBuff(packet.id);
     }
     else {
@@ -177,9 +185,13 @@ module.exports = function AutoBuff(mod) {
   mod.hook('S_START_COOLTIME_ITEM', 1, options, packet => {
     const milliseconds = Number(packet.cooldown) * 1000;
     if (!Number.isFinite(milliseconds) || milliseconds < 0) return;
+    const trackedItem = config.beer.itemIds.includes(packet.item) ||
+      selectItems('brooch').some(item => item.id === packet.item);
+    // The phase reset can arrive before the health update that closes phase one.
+    if (trackedItem && milliseconds === 0 && engine.cooldowns.get(packet.item) > Date.now())
+      holdBahaarReset('S_START_COOLTIME_ITEM');
     engine.cooldown(packet.item, Date.now() + milliseconds);
-    if (config.beer.itemIds.includes(packet.item) || selectItems('brooch').some(item => item.id === packet.item))
-      saveCooldowns();
+    if (trackedItem) saveCooldowns();
   });
   mod.hook('C_USE_ITEM', 3, { order: -9000002, filter: { fake: false, modified: null, silenced: false } }, packet => {
     record('MANUAL_ITEM_REQUEST', { ...packet,
@@ -204,13 +216,78 @@ module.exports = function AutoBuff(mod) {
   });
   function resetCombat(active = false) {
     inCombat = active;
-    defeatedBoss = null;
-    encounterBosses.clear();
+    bossFightEnded = false;
+    bosses.clear();
   }
-  function bossDied(gameId) {
-    if (!encounterBosses.delete(gameId) || encounterBosses.size || !inCombat) return;
-    defeatedBoss = gameId;
+  function resetEncounter(active = false) {
+    resetCombat(active);
+    bahaarPhase = null;
+    bahaarPhaseOneHp = null;
+    bahaarBossPhases.clear();
+  }
+  function bahaarPaused() {
+    return mod.game.me.zone === BAHAAR_ZONE &&
+      (bahaarPhase === 'confirming-reset' || bahaarPhase === 'intermission');
+  }
+  function setBahaarPhase(phase, packetName) {
+    if (bahaarPhase === phase) return;
+    bahaarPhase = phase;
+    record('BAHAAR_PHASE', { phase, packetName });
     engine.wake();
+  }
+  function holdBahaarReset(packetName) {
+    if (mod.game.me.zone === BAHAAR_ZONE && bahaarPhase === 'phase-one')
+      setBahaarPhase('confirming-reset', packetName);
+  }
+  function bossDied(gameId, packetName) {
+    if (!bosses.has(gameId) || bosses.get(gameId) === 'dead') return;
+    bosses.set(gameId, 'dead');
+    if (!inCombat) return;
+    for (const status of bosses.values()) if (status === 'active') return;
+    bossFightEnded = true;
+    record('BOSS_FIGHT_ENDED', { gameId, packetName });
+    engine.wake();
+  }
+  function markBossActive(gameId) {
+    bosses.set(gameId, 'active');
+    if (bossFightEnded) {
+      bossFightEnded = false;
+      engine.wake();
+    }
+  }
+  function observeBahaarHealth(gameId, curHp, maxHp, hasTarget, packetName) {
+    const template = bahaarBossPhases.get(gameId);
+    if (template === BAHAAR_PHASE_ONE) {
+      if (bahaarPhase === 'intermission' || bahaarPhase === 'phase-two') return true;
+      if (curHp * 5n <= maxHp) {
+        setBahaarPhase('intermission', packetName);
+        bossDied(gameId, packetName);
+        return true;
+      }
+      if (bahaarPhase === 'confirming-reset') {
+        // A repeated gauge can still report the pre-reset HP.
+        if (packetName !== 'S_CREATURE_CHANGE_HP' || curHp >= bahaarPhaseOneHp) return false;
+        setBahaarPhase('phase-one', packetName);
+      } else if (curHp < maxHp || (bahaarPhase === null && hasTarget)) {
+        setBahaarPhase('phase-one', packetName);
+      }
+      bahaarPhaseOneHp = curHp;
+    } else if (template === BAHAAR_PHASE_TWO && curHp > 0n && curHp < maxHp) {
+      setBahaarPhase('phase-two', packetName);
+    }
+    return false;
+  }
+  function observeBossHealth(gameId, curHp, maxHp, hasTarget, packetName) {
+    if (maxHp <= 0n || bosses.get(gameId) === 'dead') return;
+    if (mod.game.me.zone === BAHAAR_ZONE &&
+        observeBahaarHealth(gameId, curHp, maxHp, hasTarget, packetName)) return;
+    if (curHp <= 0n) { bossDied(gameId, packetName); return; }
+    // A full, untargeted gauge identifies the boss without marking it active.
+    if (curHp >= maxHp && !hasTarget) {
+      if (!bosses.has(gameId)) bosses.set(gameId, 'seen');
+      return;
+    }
+    markBossActive(gameId);
   }
   mod.hook('S_USER_STATUS', mod.majorPatchVersion >= 108 ? 4 : 3, options, packet => {
     if (packet.gameId !== mod.game.me.gameId) return;
@@ -221,24 +298,37 @@ module.exports = function AutoBuff(mod) {
     engine.wake();
   });
   mod.hook('S_BOSS_GAGE_INFO', 3, options, packet => {
-    if (!mod.game.isIngame || mod.game.isInLoadingScreen || mod.game.me.zone === PETRAX_ZONE || packet.maxHp <= 0n) return;
-    if (packet.curHp <= 0n) { bossDied(packet.id); return; }
-    // An untouched, untargeted gauge alone does not identify an active boss.
-    if (packet.id !== defeatedBoss && (packet.curHp < packet.maxHp || packet.target)) {
-      encounterBosses.add(packet.id);
-      if (defeatedBoss !== null) { defeatedBoss = null; engine.wake(); }
+    if (!mod.game.isIngame || mod.game.isInLoadingScreen || mod.game.me.zone === PETRAX_ZONE) return;
+    if (mod.game.me.zone === BAHAAR_ZONE && packet.huntingZoneId === BAHAAR_HUNTING_ZONE &&
+        (packet.templateId === BAHAAR_PHASE_ONE || packet.templateId === BAHAAR_PHASE_TWO)) {
+      const previous = bahaarBossPhases.get(packet.id);
+      if (previous === BAHAAR_PHASE_TWO && packet.templateId === BAHAAR_PHASE_ONE) return;
+      if (previous === BAHAAR_PHASE_ONE && packet.templateId === BAHAAR_PHASE_TWO) bosses.delete(packet.id);
+      bahaarBossPhases.set(packet.id, packet.templateId);
     }
+    observeBossHealth(packet.id, packet.curHp, packet.maxHp, Boolean(packet.target), 'S_BOSS_GAGE_INFO');
+  });
+  mod.hook('S_CREATURE_CHANGE_HP', 6, options, packet => {
+    if (bosses.has(packet.target) || bahaarBossPhases.has(packet.target))
+      observeBossHealth(packet.target, packet.curHp, packet.maxHp, false, 'S_CREATURE_CHANGE_HP');
+  });
+  mod.hook('S_NPC_STATUS', 2, options, packet => {
+    if (mod.game.me.zone !== BAHAAR_ZONE || !bahaarPaused() || packet.status !== 2 ||
+        bahaarBossPhases.get(packet.gameId) !== BAHAAR_PHASE_TWO ||
+        bosses.get(packet.gameId) === 'dead') return;
+    markBossActive(packet.gameId);
+    setBahaarPhase('phase-two', 'S_NPC_STATUS');
   });
   mod.hook('S_CREATURE_LIFE', 3, options, packet => {
-    if (!packet.alive) bossDied(packet.gameId);
+    if (!packet.alive) bossDied(packet.gameId, 'S_CREATURE_LIFE');
   });
   mod.hook('S_DESPAWN_NPC', 3, options, packet => {
-    if (packet.type === 5) bossDied(packet.gameId);
-    else encounterBosses.delete(packet.gameId);
+    if (packet.type === 5) bossDied(packet.gameId, 'S_DESPAWN_NPC');
+    else if (bosses.get(packet.gameId) !== 'dead') bosses.delete(packet.gameId);
   });
   mod.hook('S_LOGIN', mod.majorPatchVersion >= 86 ? 14 : 13, packet => {
     engine.reset(true); location = null; learning = null;
-    resetCombat(packet.status === 1);
+    resetEncounter(packet.status === 1);
     acceptedTriggers.clear(); ownCastAt = -Infinity; applyProfile();
     character = `${packet.serverId ?? mod.serverId}:${packet.playerId ?? mod.game.me.playerId}`;
     const saved = stored[character] || {};
@@ -264,9 +354,9 @@ module.exports = function AutoBuff(mod) {
     }
   });
   function pause() {
-    resetCombat(); engine.reset(); acceptedTriggers.clear(); ownCastAt = -Infinity; location = null; learning = null;
+    resetEncounter(); engine.reset(); acceptedTriggers.clear(); ownCastAt = -Infinity; location = null; learning = null;
   }
-  function leave() { saveCooldowns(); resetCombat(); engine.reset(true); acceptedTriggers.clear(); ownCastAt = -Infinity;
+  function leave() { saveCooldowns(); resetEncounter(); engine.reset(true); acceptedTriggers.clear(); ownCastAt = -Infinity;
     location = null; character = null; learning = null; }
   const onInventory = () => engine.wake();
   const onReady = () => applyProfile();

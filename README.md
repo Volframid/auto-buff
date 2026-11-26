@@ -6,6 +6,8 @@ Automates the equipped brooch and Lein's Dark Root Beer during combat and your c
 
 The module waits for your server-confirmed class buff and combat status. It uses the equipped brooch and available beer individually, 100 ms apart, as their cooldowns allow. Leaving combat or the defeat of the last tracked boss stops pending automatic uses even while the buff remains active. In **Pit of Petrax**, the class buff can trigger both items outside combat.
 
+In **Bahaar's Sanctum**, automatic use pauses when Phase 1 reaches 20% HP and resumes when the Phase 2 boss engages. A cooldown reset during the transition cannot release a pending request.
+
 Automatic brooch use requires at least **15 seconds remaining** on the class buff when the request is sent. This applies to all classes, retries and cooldowns that finish late. Beer can trigger during a shorter buff window.
 
 | Class | Trigger |
