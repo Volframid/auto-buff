@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const Automation = require('./lib/automation');
 
+const PETRAX_ZONE = 9126;
+
 module.exports = function AutoBuff(mod) {
   mod.game.initialize(['me', 'inventory', 'contract']);
   const configPath = path.join(__dirname, 'config.json');
@@ -11,6 +13,8 @@ module.exports = function AutoBuff(mod) {
   const statePath = path.join(__dirname, 'cooldowns.json');
   let config = readConfig(), profiles = readProfiles(), profileClass = null, profile = null;
   let location = null, facing = 0, character = null, learning = null, logFile = null;
+  let inCombat = Boolean(mod.game.me.inCombat), defeatedBoss = null;
+  const encounterBosses = new Set();
   const acceptedTriggers = new Set();
   let ownCastAt = -Infinity;
   const stored = readJson(statePath, {});
@@ -19,6 +23,7 @@ module.exports = function AutoBuff(mod) {
     config, now: Date.now,
     setTimeout: (fn, delay) => mod.setTimeout(fn, delay), clearTimeout: timer => mod.clearTimeout(timer),
     available: () => mod.game.isIngame && !mod.game.isInLoadingScreen && mod.game.me.alive &&
+      (mod.game.me.zone === PETRAX_ZONE || (inCombat && defeatedBoss === null)) &&
       !!profile && profileClass === mod.game.me.class && !mod.game.me.mounted && !mod.game.contract.active && location !== null,
     select: selectItems,
     send: sendItem,
@@ -197,8 +202,43 @@ module.exports = function AutoBuff(mod) {
     if (!engine.active() || !logFile) return;
     record('SYSTEM_MESSAGE', { message: packet.message });
   });
+  function resetCombat(active = false) {
+    inCombat = active;
+    defeatedBoss = null;
+    encounterBosses.clear();
+  }
+  function bossDied(gameId) {
+    if (!encounterBosses.delete(gameId) || encounterBosses.size || !inCombat) return;
+    defeatedBoss = gameId;
+    engine.wake();
+  }
+  mod.hook('S_USER_STATUS', mod.majorPatchVersion >= 108 ? 4 : 3, options, packet => {
+    if (packet.gameId !== mod.game.me.gameId) return;
+    const active = packet.status === 1;
+    if (active === inCombat) return;
+    if (active) inCombat = true;
+    else resetCombat();
+    engine.wake();
+  });
+  mod.hook('S_BOSS_GAGE_INFO', 3, options, packet => {
+    if (!mod.game.isIngame || mod.game.isInLoadingScreen || mod.game.me.zone === PETRAX_ZONE || packet.maxHp <= 0n) return;
+    if (packet.curHp <= 0n) { bossDied(packet.id); return; }
+    // An untouched, untargeted gauge alone does not identify an active boss.
+    if (packet.id !== defeatedBoss && (packet.curHp < packet.maxHp || packet.target)) {
+      encounterBosses.add(packet.id);
+      if (defeatedBoss !== null) { defeatedBoss = null; engine.wake(); }
+    }
+  });
+  mod.hook('S_CREATURE_LIFE', 3, options, packet => {
+    if (!packet.alive) bossDied(packet.gameId);
+  });
+  mod.hook('S_DESPAWN_NPC', 3, options, packet => {
+    if (packet.type === 5) bossDied(packet.gameId);
+    else encounterBosses.delete(packet.gameId);
+  });
   mod.hook('S_LOGIN', mod.majorPatchVersion >= 86 ? 14 : 13, packet => {
     engine.reset(true); location = null; learning = null;
+    resetCombat(packet.status === 1);
     acceptedTriggers.clear(); ownCastAt = -Infinity; applyProfile();
     character = `${packet.serverId ?? mod.serverId}:${packet.playerId ?? mod.game.me.playerId}`;
     const saved = stored[character] || {};
@@ -223,8 +263,10 @@ module.exports = function AutoBuff(mod) {
       if (wasUnknown) engine.wake();
     }
   });
-  function pause() { engine.reset(); acceptedTriggers.clear(); ownCastAt = -Infinity; location = null; learning = null; }
-  function leave() { saveCooldowns(); engine.reset(true); acceptedTriggers.clear(); ownCastAt = -Infinity;
+  function pause() {
+    resetCombat(); engine.reset(); acceptedTriggers.clear(); ownCastAt = -Infinity; location = null; learning = null;
+  }
+  function leave() { saveCooldowns(); resetCombat(); engine.reset(true); acceptedTriggers.clear(); ownCastAt = -Infinity;
     location = null; character = null; learning = null; }
   const onInventory = () => engine.wake();
   const onReady = () => applyProfile();

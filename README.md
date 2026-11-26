@@ -1,10 +1,12 @@
 # Auto Buff
 
-Automates the equipped brooch and Lein's Dark Root Beer during your class buff. Supports all 13 TERA classes.
+Automates the equipped brooch and Lein's Dark Root Beer during combat and your class buff. Supports all 13 TERA classes.
 
 ## How it works
 
-The module detects your class and waits for its actual server-confirmed buff. It uses the equipped brooch and available beer individually, 100 ms apart. An item still on cooldown is used when its real cooldown ends, provided the class buff is still active. Automatic brooch use additionally requires at least **15 seconds remaining** on the class-buff window at the moment of the request. This applies to every class, including retries and cooldowns that finish late. For example, a brooch becoming ready with four seconds of Adrenaline Rush left waits for an eligible buff window instead. Beer has no new minimum-duration restriction. It never casts or cancels a skill, or creates a fake buff.
+The module waits for your server-confirmed class buff and combat status. It uses the equipped brooch and available beer individually, 100 ms apart, as their cooldowns allow. Leaving combat or the defeat of the last tracked boss stops pending automatic uses even while the buff remains active. In **Pit of Petrax**, the class buff can trigger both items outside combat.
+
+Automatic brooch use requires at least **15 seconds remaining** on the class buff when the request is sent. This applies to all classes, retries and cooldowns that finish late. Beer can trigger during a shorter buff window.
 
 | Class | Trigger |
 |---|---|
